@@ -65,6 +65,72 @@ def build_dm_string(serial_bytes):
     return f"G{data_hex}-{crc:04X}"
 
 
+def parse_input(raw):
+    cleaned = (raw or "").strip()
+    upper = cleaned.upper()
+    if upper.startswith("G"):
+        match = DM_RE.match(upper)
+        if not match:
+            return {
+                "ok": False,
+                "message": "Ungueltiges Format (DM-Format erwartet: GXXXXXXXX-XXXX).",
+                "source": "dm",
+            }
+        payload_hex = match.group(1).upper()
+        crc_hex = match.group(2).upper()
+        try:
+            serial_bytes = bytes.fromhex(payload_hex)
+        except ValueError:
+            return {"ok": False, "message": "Ungueltiges Format (DM-Payload ungueltig).", "source": "dm"}
+        crc_calc = crc16_ccitt_false(serial_bytes)
+        if f"{crc_calc:04X}" != crc_hex:
+            return {
+                "ok": False,
+                "message": f"CRC falsch: erwartet {crc_calc:04X}, erhalten {crc_hex}",
+                "source": "dm",
+                "normalized": sn_from_bytes(serial_bytes),
+                "payload_hex": payload_hex,
+                "dm_string": build_dm_string(serial_bytes),
+                "u32_hex": payload_hex,
+            }
+        return {
+            "ok": True,
+            "message": "OK",
+            "source": "dm",
+            "normalized": sn_from_bytes(serial_bytes),
+            "payload_hex": payload_hex,
+            "dm_string": build_dm_string(serial_bytes),
+            "u32_hex": payload_hex,
+            "bytes": serial_bytes,
+        }
+
+    parsed = parse_sn(cleaned)
+    if not parsed:
+        return {
+            "ok": False,
+            "message": "Ungueltiges Format (SN:xx-xx-xx-xx oder 8 Hex erwartet).",
+            "source": "sn",
+        }
+    dm_string = build_dm_string(parsed["bytes"])
+    if not dm_string:
+        return {
+            "ok": False,
+            "message": "Payload konnte nicht erzeugt werden.",
+            "source": "sn",
+            "normalized": parsed["normalized"],
+        }
+    return {
+        "ok": True,
+        "message": "OK",
+        "source": "sn",
+        "normalized": parsed["normalized"],
+        "payload_hex": parsed["data_hex"],
+        "dm_string": dm_string,
+        "u32_hex": parsed["u32_hex"],
+        "bytes": parsed["bytes"],
+    }
+
+
 def _extract_payload_hex(value):
     if not value:
         return None
@@ -170,57 +236,27 @@ def append_serial(csv_path, normalized_serial, payload_hex, u32_hex, note):
 
 
 def validate_serial(raw, csv_path):
-    cleaned = (raw or "").strip()
-    match = DM_RE.match(cleaned.upper())
-    if match:
-        payload_hex = match.group(1).upper()
-        crc_hex = match.group(2).upper()
-        try:
-            serial_bytes = bytes.fromhex(payload_hex)
-        except ValueError:
-            return ValidationResult(False, "Ungueltiges Format (DM-Payload ungueltig).")
-        crc_calc = crc16_ccitt_false(serial_bytes)
-        if f"{crc_calc:04X}" != crc_hex:
-            return ValidationResult(
-                False,
-                f"CRC falsch: erwartet {crc_calc:04X}, erhalten {crc_hex}",
-                sn_from_bytes(serial_bytes),
-                payload_hex,
-                build_dm_string(serial_bytes),
-                payload_hex,
-            )
-        if check_duplicate(csv_path, payload_hex):
-            return ValidationResult(
-                False,
-                "Duplikat: Payload existiert bereits.",
-                sn_from_bytes(serial_bytes),
-                payload_hex,
-                build_dm_string(serial_bytes),
-                payload_hex,
-            )
+    parsed = parse_input(raw)
+    if not parsed.get("ok"):
         return ValidationResult(
-            True,
-            "OK",
-            sn_from_bytes(serial_bytes),
-            payload_hex,
-            build_dm_string(serial_bytes),
-            payload_hex,
+            False,
+            parsed.get("message", "Ungueltiges Format."),
+            parsed.get("normalized"),
+            parsed.get("payload_hex"),
+            parsed.get("dm_string"),
+            parsed.get("u32_hex"),
         )
-
-    parsed = parse_sn(cleaned)
-    if not parsed:
-        return ValidationResult(False, "Ungueltiges Format (SN:xx-xx-xx-xx oder 8 Hex erwartet).")
-    payload_hex = parsed["data_hex"]
-    dm_string = build_dm_string(parsed["bytes"])
-    if not dm_string:
-        return ValidationResult(False, "Payload konnte nicht erzeugt werden.", parsed["normalized"])
+    payload_hex = parsed["payload_hex"]
+    dm_string = parsed["dm_string"]
+    normalized = parsed["normalized"]
+    u32_hex = parsed["u32_hex"]
     if check_duplicate(csv_path, payload_hex):
         return ValidationResult(
             False,
             "Duplikat: Payload existiert bereits.",
-            parsed["normalized"],
+            normalized,
             payload_hex,
             dm_string,
-            parsed["u32_hex"],
+            u32_hex,
         )
-    return ValidationResult(True, "OK", parsed["normalized"], payload_hex, dm_string, parsed["u32_hex"])
+    return ValidationResult(True, "OK", normalized, payload_hex, dm_string, u32_hex)

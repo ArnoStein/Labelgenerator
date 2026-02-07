@@ -7,7 +7,7 @@ from core import (
     load_serial_sets,
     next_sn_max_plus_one,
     next_sn_smallest_free,
-    validate_serial,
+    parse_input,
 )
 from pdf_label import datamatrix_available, generate_label_pdf
 from printing import print_pdf_lp, has_lp
@@ -104,33 +104,57 @@ class App(tk.Tk):
     def _reload_sets(self):
         self.payloads, self.u32_set = load_serial_sets(CSV_PATH)
 
-    def _validate_live(self):
-        result = validate_serial(self.serial_var.get(), CSV_PATH)
-        if result.ok:
-            self.current_payload_hex = result.payload_hex
-            self.current_dm_string = result.dm_string
-            self.current_sn = result.normalized
-            self.current_u32 = result.u32_hex
-            self._set_status(True, f"OK: {result.normalized} | u32={result.u32_hex} | payload={result.payload_hex}")
-            if result.dm_string:
-                self.dm_status_var.set(f"DM: {result.dm_string}")
-        else:
-            self.current_payload_hex = result.payload_hex
-            self.current_dm_string = result.dm_string
-            self.current_sn = result.normalized
-            self.current_u32 = result.u32_hex
-            self._set_status(False, result.message)
+    def _validate_current(self, check_duplicate):
+        self._reload_sets()
+        parsed = parse_input(self.serial_var.get())
+        if not parsed.get("ok"):
+            self.current_payload_hex = parsed.get("payload_hex")
+            self.current_dm_string = parsed.get("dm_string")
+            self.current_sn = parsed.get("normalized")
+            self.current_u32 = parsed.get("u32_hex")
+            self._set_status(False, parsed.get("message", "Ungueltiges Format."))
             self.dm_status_var.set(self._dm_status_text())
+            return False
+
+        payload_hex = parsed["payload_hex"]
+        dm_string = parsed["dm_string"]
+        normalized = parsed["normalized"]
+        u32_hex = parsed.get("u32_hex")
+        is_dup = payload_hex in self.payloads
+
+        self.current_payload_hex = payload_hex
+        self.current_dm_string = dm_string
+        self.current_sn = normalized
+        self.current_u32 = u32_hex
+
+        if check_duplicate and is_dup:
+            self._set_status(False, "Duplikat: Payload existiert bereits.")
+            self.dm_status_var.set(f"DM: {dm_string}")
+            return False
+
+        status = f"CRC OK | {normalized} | payload={payload_hex} | dm={dm_string}"
+        if u32_hex:
+            status += f" | u32={u32_hex}"
+        if is_dup:
+            status += " | Hinweis: bereits in CSV vorhanden"
+        self._set_status(True, status)
+        self.dm_status_var.set(f"DM: {dm_string}")
+        return True
+
+    def _validate_live(self):
+        self._validate_current(check_duplicate=False)
 
     def _ensure_valid(self):
-        self._validate_live()
-        if not self.current_payload_hex or not self.current_sn:
-            messagebox.showerror("Fehler", "Seriennummer ungueltig oder unvollstaendig.")
+        if not self._validate_current(check_duplicate=True):
+            if self.current_payload_hex and self.current_sn:
+                messagebox.showerror("Fehler", "Seriennummer bereits in CSV vorhanden.")
+            else:
+                messagebox.showerror("Fehler", "Seriennummer ungueltig oder unvollstaendig.")
             return False
         return True
 
     def _on_check(self):
-        self._validate_live()
+        self._validate_current(check_duplicate=False)
         self._focus_serial()
 
     def _on_save(self):
@@ -152,7 +176,7 @@ class App(tk.Tk):
         self._focus_serial()
 
     def _on_label(self):
-        if not self._ensure_valid():
+        if not self._validate_current(check_duplicate=False):
             return
         default_name = f"label_{self.current_payload_hex}.pdf"
         path = filedialog.asksaveasfilename(
@@ -176,7 +200,7 @@ class App(tk.Tk):
         self._focus_serial()
 
     def _on_print(self):
-        if not self._ensure_valid():
+        if not self._validate_current(check_duplicate=False):
             return
         tmp_name = f"_tmp_label_{self.current_payload_hex}.pdf"
         tmp_path = os.path.join(os.getcwd(), tmp_name)
