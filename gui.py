@@ -2,6 +2,10 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+APP_NAME = "SN / DataMatrix Utility"
+APP_VERSION = "v1"
+APP_TITLE = f"{APP_NAME} {APP_VERSION}"
+
 from core import (
     append_serial,
     load_serial_sets,
@@ -19,7 +23,7 @@ CSV_PATH = "serials.csv"
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Serial Label Tool")
+        self.title(APP_TITLE)
         self.resizable(False, False)
 
         self.serial_var = tk.StringVar()
