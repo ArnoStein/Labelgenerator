@@ -1,0 +1,3 @@
+reportlab
+# Optional, aber empfohlen fuer DataMatrix:
+pyStrich
